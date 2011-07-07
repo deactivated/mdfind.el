@@ -35,39 +35,54 @@
     (eq  . "=="))
   "A list of abbreviations for Spotlight operators.")
 
+(defun md-queryp (s)
+  (and (listp s) (eq (car s) 'q)))
+
+(defun md-val (s)
+  (cdr s))
+
+(defun md-ret (s)
+  (cons 'q s))
+
+(defun md-compiled-val (s)
+  (md-val (md-compile-query s)))
+
 (defun md-compile-query (s)
+  "Compile an expression S in the mdfind.el query language to a
+Spotlight query."
   (cond
-   ((null s) "")
-   ((stringp s) s)
-   ((numberp s) (format "%s" s))
+   ((md-queryp s) s)
+   ((null s)
+    (md-ret ""))
+   ((stringp s)
+    (md-ret (format "%S" s)))
+   ((numberp s)
+    (md-ret (format "%s" s)))
    ((symbolp s)
-    (or (cdr (assq s md-vars))
-        (symbol-name s)))
+    (md-ret (or (cdr (assq s md-vars))
+                (symbol-name s))))
+   ((and (consp s) (not (listp (cdr s))))
+    (md-ret (format "%S%s" (car s) (cdr s))))
+
    ((listp s)
     (case (first s)
       (range
-       (apply 'format "InRange(%s, %s, %s)"
-              (mapcar 'md-compile-query (cdr s))))
+       (md-ret (apply 'format "InRange(%s, %s, %s)"
+                      (mapcar 'md-compiled-val (cdr s)))))
       (in
        (md-compile-query
         (cons 'or
               (mapcar (lambda (x)
                         (list 'eq (second s) x))
                       (cddr s)))))
-      ((s str string)
-       (format "%S%s"
-               (second s)
-               (or (third s) "")))
-      
       (t
        (let ((op (concat " "
                          (or (cdr (assq (car s) md-ops))
                              (symbol-name (car s)))
                          " ")))
-         (concat "("
-                 (mapconcat 'md-compile-query (cdr s) op)
-                 ")")))))))
-
+         (md-ret (concat "("
+                         (mapconcat 'md-compiled-val (cdr s) op)
+                         ")"))))))))
 
 (defun md-find (query &rest dirs)
   "Run a Spotlight search for QUERY and return a list of
@@ -76,7 +91,8 @@ resulting files."
          (if dirs
              (concat "-onlyin "
                      (mapconcat 'shell-quote-argument dirs " -onlyin ")) ""))
-        (query-str (md-compile-query query)))
+        (query-str (md-compiled-val query)))
+    (message "%s" query-str)
     (with-temp-buffer
       (let ((coding-system-for-read (or file-name-coding-system 'utf-8))
             (coding-system-for-write 'utf-8))
@@ -89,14 +105,12 @@ resulting files."
       (split-string
        (buffer-string) "\n" t))))
 
-
 (defun md-dired (query &rest dirs)
   "Run QUERY and open results in a dired buffer.  Requires the
 package mdfind-dired."
   (apply 'mdfind-dired
-   (format "%S" (md-compile-query query))
+   (format "%S" (md-compiled-val query))
    dirs))
-
 
 (provide 'mdfind)
 ;;; mdfind.el ends here.
